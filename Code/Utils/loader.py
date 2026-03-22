@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 from typing import Dict, Any
 
-from utils import normalize_to_uint16
+from Code.Utils.utils import normalize_to_uint16
 
 # 容器内裁剪结果目录，对应宿主机 ./results/crop
 CROP_ROOT = Path("/results/crop")

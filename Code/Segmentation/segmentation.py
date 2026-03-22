@@ -9,8 +9,8 @@ from skimage.morphology import remove_small_objects
 from skimage.measure import label
 import cv2
 
-from utils import normalize_to_uint16
-from config import config
+from Code.Utils.utils import normalize_to_uint16
+from Code.Config.config import config
 
 USE_GPU = config.get("SEGMENTATION.USE_GPU", torch.cuda.is_available())
 _MODEL = None

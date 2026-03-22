@@ -5,9 +5,9 @@ import argparse
 import sys
 import time
 
-from loader import load_block
-from segmentation import segment_nuclei, get_cytoplasm_masks
-from utils import q90
+from Code.Utils.loader import load_block
+from Code.Segmentation.segmentation import segment_nuclei, get_cytoplasm_masks
+from Code.Utils.utils import q90
 
 
 def _progress(prefix: str, current: int, total: int):

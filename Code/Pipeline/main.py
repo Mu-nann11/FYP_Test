@@ -6,7 +6,7 @@ from fiji_stitcher.outputs import open_single_stitched_result, open_all_stitched
 from fiji_stitcher.stitching import init_imagej
 from fiji_stitcher.ui import timeout_input
 
-from crop_stitched_results import crop_all_blocks
+from Code.Stitching.crop_stitched_results import crop_all_blocks
 
 import os
 import re

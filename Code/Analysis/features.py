@@ -3,8 +3,8 @@ import pandas as pd
 from skimage.measure import regionprops
 from skimage.filters import threshold_otsu
 import cv2
-from utils import q90
-from config import config
+from Code.Utils.utils import q90
+from Code.Config.config import config
 
 
 def _safe_otsu_threshold(vals: np.ndarray, fallback: float) -> float:

@@ -3,8 +3,8 @@ import os
 import shutil
 import traceback
 from pathlib import Path
-from utils import get_logger
-from config import config
+from Code.Utils.utils import get_logger
+from Code.Config.config import config
 
 # 获取统一日志记录器
 logger = get_logger("rename_file")
