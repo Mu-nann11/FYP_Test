@@ -6,10 +6,12 @@ from fiji_stitcher.outputs import open_single_stitched_result, open_all_stitched
 from fiji_stitcher.stitching import init_imagej
 from fiji_stitcher.ui import timeout_input
 
-from Code.Stitching.crop_stitched_results import crop_all_blocks
+from Stitching.crop_stitched_results import crop_all_blocks
+from DataManagement.preprocess import run_preprocess, check_data_status, print_status_report
 
 import os
 import re
+from pathlib import Path
 
 
 CHANNEL_NAMES = {"DAPI", "HER2", "PR", "ER", "FITC", "Cy3", "Cy5"}
@@ -155,8 +157,61 @@ def collect_level1_directories_from_input(path, logger):
     return collected
 
 
+def run_data_preprocessing(config, logger):
+    """
+    运行数据预处理流程
+    返回: (是否需要继续拼接, 预处理结果)
+    """
+    preprocess_config = config.get("PREPROCESS", {})
+    
+    # 如果配置中禁用了预处理，直接返回
+    if not preprocess_config.get("AUTO_RUN", True):
+        logger.info("Preprocessing is disabled in config")
+        return True, None
+    
+    # 如果只是检查模式，不做预处理
+    if preprocess_config.get("CHECK_ONLY"):
+        logger.info("Checking data status (--check-data mode)")
+        status = check_data_status(Path(config["DEFAULT_ROOT_DIR"]) / config.get("RAW_DATA_DIR_NAME", "Raw_Data"))
+        has_issues = print_status_report(status)
+        return not has_issues, status
+    
+    # 获取 Raw_Data 根目录
+    raw_data_root = Path(config["DEFAULT_ROOT_DIR"]) / config.get("RAW_DATA_DIR_NAME", "Raw_Data")
+    
+    if not raw_data_root.exists():
+        logger.warning(f"Raw_Data directory not found: {raw_data_root}")
+        return True, None
+    
+    # 先检查数据状态
+    status = check_data_status(raw_data_root)
+    has_issues = print_status_report(status)
+    
+    if not has_issues:
+        logger.info("All data is already preprocessed")
+        return True, None
+    
+    # 运行预处理
+    print("\n" + "=" * 60)
+    print("🔧 开始数据预处理...")
+    print("=" * 60)
+    
+    dry_run = preprocess_config.get("DRY_RUN", False)
+    results = run_preprocess(raw_data_root, dry_run=dry_run, logger=logger)
+    
+    print("\n" + "=" * 60)
+    print("✅ 预处理完成！")
+    if dry_run:
+        print("   （以上为 dry-run 预览，实际未执行任何操作）")
+    print("=" * 60)
+    
+    return True, results
+
+
 def main():
     import sys
+    from pathlib import Path
+    
     config = apply_cli_overrides(load_config())
     logger = get_logger(config)
 
@@ -172,6 +227,28 @@ def main():
     is_batch = "--batch" in sys.argv
 
     logger.info("Program started")
+
+    # ============================================================
+    # 数据预处理阶段
+    # ============================================================
+    should_continue, preprocess_result = run_data_preprocessing(config, logger)
+    
+    # 如果只是检查模式
+    if config.get("PREPROCESS", {}).get("CHECK_ONLY"):
+        return
+    
+    # 如果只是预处理模式（不运行拼接）
+    if config.get("PREPROCESS", {}).get("ONLY_PREPROCESS"):
+        print("✅ 预处理完成，程序退出（--preprocess-only 模式）")
+        return
+    
+    if not should_continue:
+        print("❌ 预处理失败，程序退出")
+        return
+    
+    # ============================================================
+    # 图像拼接阶段
+    # ============================================================
     logger.info("Initializing ImageJ...")
 
     try:
@@ -182,63 +259,109 @@ def main():
         print(f"❌ ImageJ 初始化失败: {e}")
         return
 
-    if is_batch:
-        choice = "1"
+    # 非交互模式或配置了自动裁剪时，跳过菜单直接执行拼接+自动裁剪
+    if not config["INTERACTIVE"]:
+        # batch 模式：直接执行拼接流程
+        pass
     else:
         print("\n" + "=" * 50)
         print("请选择功能:")
-        print("1. 处理所有一级目录（批量拼接）")
-        print("2. 打开单个拼接结果")
-        print("3. 批量打开所有拼接结果")
-        print("4. 批量裁剪拼接结果（保持原始位深）")
+        print("1. 预处理 + 拼接所有数据")
+        print("2. 仅预处理（不拼接）")
+        print("3. 检查数据预处理状态")
+        print("4. 仅拼接（跳过预处理）")
+        print("5. 打开单个拼接结果")
+        print("6. 批量打开所有拼接结果")
+        print("7. 批量裁剪拼接结果")
         print("=" * 50)
 
         choice = timeout_input(
-            "请输入功能编号 (1-4，默认1)",
+            "请输入功能编号 (1-7，默认1)",
             default="1",
             timeout=10,
             interactive=config["INTERACTIVE"],
         ).strip() or "1"
 
-    if choice == "1":
-        if config.get("ONLY_LEVEL1"):
-            only_level1 = config["ONLY_LEVEL1"]
+        # 选项 4-7 需要先初始化 ImageJ
+        if choice in ["4", "5", "6", "7"]:
+            try:
+                ij = init_imagej(config)
+                logger.info("ImageJ initialized")
+            except Exception as e:
+                logger.exception("ImageJ init failed: %s", e)
+                print(f"❌ ImageJ 初始化失败: {e}")
+                return
 
-            if isinstance(only_level1, (list, tuple)):
-                level1_dirs = []
-                for input_path in only_level1:
-                    level1_dirs.extend(collect_level1_directories_from_input(input_path, logger))
-            else:
-                level1_dirs = collect_level1_directories_from_input(only_level1, logger)
-        else:
-            level1_dirs = get_all_level1_directories(config)
+        if choice == "1":
+            # 预处理已在前面执行
+            pass  # 继续执行拼接
 
-        if not level1_dirs:
-            logger.error("No level1 directories found; exit.")
-            print("❌ 无可用一级目录，程序退出")
+        elif choice == "2":
+            print("✅ 仅预处理模式，程序退出")
             return
 
-        logger.info("Final level1 directories count: %d", len(level1_dirs))
-        for d in level1_dirs:
-            logger.info("Level1 directory: %s", d)
+        elif choice == "3":
+            # 检查模式已在前面执行
+            return
 
-        process_all_level1_dirs(level1_dirs, config, ij, logger)
+        elif choice == "4":
+            print("⚠️ 跳过预处理模式")
+            # 继续执行拼接
+            pass
+
+        elif choice == "5":
+            open_single_stitched_result(config, logger)
+            return
+
+        elif choice == "6":
+            open_all_stitched_results(config, logger)
+            return
+
+        elif choice == "7":
+            crop_all_blocks(config)
+            print(f"✅ 裁剪完成，输出目录: {config['CROP_OUTPUT_DIR']}")
+            return
+
+        else:
+            print("输入无效，程序退出")
+            return
+
+    # ============================================================
+    # 执行拼接（选项 1 和 4）
+    # ============================================================
+    if config.get("ONLY_LEVEL1"):
+        only_level1 = config["ONLY_LEVEL1"]
+
+        if isinstance(only_level1, (list, tuple)):
+            level1_dirs = []
+            for input_path in only_level1:
+                level1_dirs.extend(collect_level1_directories_from_input(input_path, logger))
+        else:
+            level1_dirs = collect_level1_directories_from_input(only_level1, logger)
+    else:
+        level1_dirs = get_all_level1_directories(config)
+
+    if not level1_dirs:
+        logger.error("No level1 directories found; exit.")
+        print("❌ 无可用一级目录，程序退出")
         return
 
-    if choice == "2":
-        open_single_stitched_result(config, logger)
-        return
+    logger.info("Final level1 directories count: %d", len(level1_dirs))
+    for d in level1_dirs:
+        logger.info("Level1 directory: %s", d)
 
-    if choice == "3":
-        open_all_stitched_results(config, logger)
-        return
+    process_all_level1_dirs(level1_dirs, config, ij, logger)
 
-    if choice == "4":
+    # ============================================================
+    # 自动裁剪（如果配置启用）
+    # ============================================================
+    logger.info("AUTO_CROP_AFTER_STITCH config value: %s", config.get("AUTO_CROP_AFTER_STITCH", False))
+    if config.get("AUTO_CROP_AFTER_STITCH", False):
+        print("\n" + "=" * 60)
+        print("🔄 拼接完成，自动运行裁剪...")
+        print("=" * 60)
         crop_all_blocks(config)
         print(f"✅ 裁剪完成，输出目录: {config['CROP_OUTPUT_DIR']}")
-        return
-
-    print("输入无效，程序退出")
 
 
 if __name__ == "__main__":
