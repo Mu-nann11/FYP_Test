@@ -19,7 +19,6 @@ WORKDIR /app
 # 复制环境文件（变化较少）
 COPY Code/Config/environment.yml /tmp/environment.yml
 
-# 使用缓存挂载创建环境（避免重复下载）
 RUN --mount=type=cache,target=/opt/conda/pkgs \
     micromamba env create -f /tmp/environment.yml && \
     micromamba clean --all --yes
