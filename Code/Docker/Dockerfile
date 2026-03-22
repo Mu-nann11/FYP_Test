@@ -36,7 +36,7 @@ RUN if [ "$DOWNLOAD_FIJI" = "1" ]; then \
 
 ENV FIJI_PATH=/opt/Fiji.app
 ENV FIJI_EXE=/opt/Fiji.app/ImageJ-linux64
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/app:/app/Code
 
 # 复制代码（最后，变化最频繁）
 COPY Code/ /app/Code/
