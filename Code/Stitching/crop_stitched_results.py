@@ -2,22 +2,47 @@ from pathlib import Path
 import re
 import tifffile
 
-CHANNELS = ["DAPI", "HER2", "PR", "ER"]
+CHANNELS = ["DAPI", "HER2", "PR", "ER", "KI67"]
 
 
-def crop_one_block(block_dir: Path, crop_root: Path, margin: int = 20, out_name_prefix: str = None):
-    """Crop Cycle1 channels. Returns (y0, x0, y1, x1) window, or None on failure."""
-    block_name = block_dir.name
-    prefix = out_name_prefix or block_name
-
+def find_channel_files(block_dir: Path):
+    """根据目录结构智能匹配通道文件"""
     paths = {}
+    all_tifs = list(block_dir.glob("*.tif")) + list(block_dir.glob("*.tiff"))
+    
     for ch in CHANNELS:
-        pattern = f"{block_name}_{ch}*.tif"
-        files = sorted(block_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
-        if not files:
-            print(f"[{block_name}] 通道 {ch} 未找到匹配 {pattern}，跳过该块")
-            return None
-        paths[ch] = files[0]
+        matched = []
+        for p in all_tifs:
+            name = p.name.upper()
+            if ch.upper() in name:
+                matched.append(p)
+        
+        if matched:
+            paths[ch] = sorted(matched, key=lambda p: p.stat().st_mtime, reverse=True)[0]
+    
+    return paths
+
+
+def crop_one_block(block_dir: Path, crop_root: Path, block_name: str, cycle_suffix: str, margin: int = 20):
+    """
+    Crop one block's channels.
+    
+    输出目录: {crop_root}/{block_name}/{block_name}_{dataset}_{cycle_suffix}/
+    输出文件: {block_name}_{dataset}_{cycle_suffix}_{channel}_crop.tif
+    """
+    # 输出目录: TMAd/A3/A3_TMAd_Cycle1/
+    out_dir = crop_root / block_name / f"{block_name}_{cycle_suffix}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    
+    paths = find_channel_files(block_dir)
+    
+    if not paths:
+        print(f"[{block_name}] 未找到任何通道文件，跳过该块")
+        return None
+
+    for ch in CHANNELS:
+        if ch not in paths:
+            print(f"[{block_name}] 通道 {ch} 未找到")
 
     sizes = {}
     arrays = {}
@@ -45,54 +70,68 @@ def crop_one_block(block_dir: Path, crop_root: Path, margin: int = 20, out_name_
             print(f"[{block_name}] 通道 {ch} 尺寸过小 ({h}x{w})，无法按统一窗口裁剪，跳过该块")
             return None
 
-    out_block_dir = crop_root / prefix
-    out_block_dir.mkdir(parents=True, exist_ok=True)
-
     for ch, arr in arrays.items():
         cropped = arr[y0:y1, x0:x1]
-        out_path = out_block_dir / f"{prefix}_{ch}_crop.tif"
+        # 文件名: A3_TMAd_Cycle1_DAPI_crop.tif
+        out_path = out_dir / f"{block_name}_{cycle_suffix}_{ch}_crop.tif"
         tifffile.imwrite(str(out_path), cropped)
         print(f"[{block_name}] 已保存: {out_path}")
 
     return (y0, x0, y1, x1)
 
 
-def crop_cycle2(cycle2_dir: Path, crop_root: Path, block_base: str, window):
-    """Crop Cycle2 composite using the same window as Cycle1."""
+def crop_cycle2(cycle2_dir: Path, crop_root: Path, block_name: str, cycle_suffix: str, window):
+    """Crop Cycle2 所有通道文件，使用与 Cycle1 相同的裁剪窗口。"""
     y0, x0, y1, x1 = window
-
-    # find composite tif
-    candidates = list(cycle2_dir.glob("*_Composite.tif")) + list(cycle2_dir.glob("*.tif"))
-    candidates = [f for f in candidates if f.is_file()]
-    if not candidates:
-        print(f"[{cycle2_dir.name}] 未找到 Cycle2 tif，跳过")
+    
+    # 查找所有通道文件
+    paths = find_channel_files(cycle2_dir)
+    
+    if not paths:
+        # 如果没有找到通道文件（命名不符合预期），尝试找所有 tif
+        all_tifs = list(cycle2_dir.glob("*.tif")) + list(cycle2_dir.glob("*.tiff"))
+        for tif_path in all_tifs:
+            if tif_path.is_file():
+                ch = None
+                for c in CHANNELS:
+                    if c in tif_path.name.upper():
+                        ch = c
+                        break
+                if ch:
+                    paths[ch] = tif_path
+    
+    if not paths:
+        print(f"[{cycle2_dir.name}] 未找到 Cycle2 tif 文件，跳过")
         return
-
-    comp_path = candidates[0]
-    arr = tifffile.imread(str(comp_path))
-    h, w = arr.shape[-2], arr.shape[-1]
-
-    if h < y1 or w < x1:
-        print(f"[{cycle2_dir.name}] Cycle2 尺寸过小 ({h}x{w})，使用 resize 对齐")
-        import cv2
-        import numpy as np
-        target_h, target_w = y1 - y0, x1 - x0
-        if arr.ndim == 2:
-            arr = cv2.resize(arr, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
-            cropped = arr
-        else:
-            cropped = np.stack([
-                cv2.resize(arr[i], (target_w, target_h), interpolation=cv2.INTER_LINEAR)
-                for i in range(arr.shape[0])
-            ])
-    else:
-        cropped = arr[..., y0:y1, x0:x1] if arr.ndim > 2 else arr[y0:y1, x0:x1]
-
-    out_dir = crop_root / block_base / "cycle2"
+    
+    # 输出目录: TMAd/A3/A3_TMAd_Cycle2/
+    out_dir = crop_root / block_name / f"{block_name}_{cycle_suffix}"
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{block_base}_composite_crop.tif"
-    tifffile.imwrite(str(out_path), cropped)
-    print(f"[{cycle2_dir.name}] Cycle2 已保存: {out_path}")
+    
+    import cv2
+    import numpy as np
+    
+    for ch, tif_path in paths.items():
+        arr = tifffile.imread(str(tif_path))
+        h, w = arr.shape[-2], arr.shape[-1]
+        
+        if h < y1 or w < x1:
+            print(f"[{cycle2_dir.name}] 通道 {ch} 尺寸过小 ({h}x{w})，使用 resize 对齐")
+            target_h, target_w = y1 - y0, x1 - x0
+            if arr.ndim == 2:
+                arr = cv2.resize(arr, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+                cropped = arr
+            else:
+                cropped = np.stack([
+                    cv2.resize(arr[i], (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+                    for i in range(arr.shape[0])
+                ])
+        else:
+            cropped = arr[..., y0:y1, x0:x1] if arr.ndim > 2 else arr[y0:y1, x0:x1]
+        
+        out_path = out_dir / f"{block_name}_{cycle_suffix}_{ch}_crop.tif"
+        tifffile.imwrite(str(out_path), cropped)
+        print(f"[{cycle2_dir.name}] 通道 {ch} 已保存: {out_path}")
 
 
 def crop_all_blocks(config):
@@ -101,56 +140,73 @@ def crop_all_blocks(config):
     margin = int(config.get("CROP_MARGIN", 20))
 
     crop_root.mkdir(parents=True, exist_ok=True)
-    block_pat = re.compile(r"^[A-Za-z0-9_-]+$")
-    skip_names = {"logs", "log", "crop", "crop_result", "stitched_result", "stitched_results"}
+    skip_names = {"logs", "log", "crop", "crop_result", "stitched_result", "stitched_results", 
+                  "Cycle1", "Cycle2", "cycle1", "cycle2", "DAPI", "HER2", "PR", "ER", "KI67"}
 
-    for entry in sorted(stitched_root.iterdir()):
-        if not entry.is_dir() or not block_pat.match(entry.name):
+    print(f"[裁剪] 输入目录: {stitched_root}")
+    print(f"[裁剪] 输出目录: {crop_root}")
+    print(f"[裁剪] 边距: {margin}")
+
+    blocks_to_process = []  # [(dataset_name, block_name, has_cycle1_cycle2)]
+    
+    for dataset_dir in sorted(stitched_root.iterdir()):
+        if not dataset_dir.is_dir():
             continue
-
-        has_tif = any(entry.glob("*.tif"))
-        if has_tif:
-            # 旧结构：直接是 block_dir
-            if entry.name.lower() not in skip_names:
-                crop_one_block(entry, crop_root=crop_root, margin=margin)
-        else:
-            # 新结构：dataset 层
-            dataset_name = entry.name
-            dataset_crop_root = crop_root / dataset_name
-
-            # 收集所有 Cycle1 目录，配对 Cycle2
-            cycle1_dirs = {}
-            cycle2_dirs = {}
-            plain_dirs = []
-
-            for block_dir in sorted(entry.iterdir()):
-                if not block_dir.is_dir() or not block_pat.match(block_dir.name):
+        
+        cycle_dirs = {}
+        for sub in sorted(dataset_dir.iterdir()):
+            if not sub.is_dir():
+                continue
+            sub_name_lower = sub.name.lower()
+            if 'cycle1' in sub_name_lower:
+                cycle_dirs['cycle1'] = sub
+            elif 'cycle2' in sub_name_lower:
+                cycle_dirs['cycle2'] = sub
+        
+        if cycle_dirs:
+            sample_cycle_dir = cycle_dirs.get('cycle1') or cycle_dirs.get('cycle2')
+            for block_dir in sorted(sample_cycle_dir.iterdir()):
+                if not block_dir.is_dir():
                     continue
                 if block_dir.name.lower() in skip_names:
                     continue
-                name = block_dir.name
-                if "_Cycle1" in name or "_cycle1" in name:
-                    base = re.sub(r"[_]?[Cc]ycle1$", "", name)
-                    cycle1_dirs[base] = block_dir
-                elif "_Cycle2" in name or "_cycle2" in name:
-                    base = re.sub(r"[_]?[Cc]ycle2$", "", name)
-                    cycle2_dirs[base] = block_dir
-                else:
-                    plain_dirs.append(block_dir)
+                
+                block_tifs = list(block_dir.glob("*.tif")) + list(block_dir.glob("*.tiff"))
+                if block_tifs:
+                    blocks_to_process.append((dataset_dir.name, block_dir.name, True))
+                    print(f"[发现] 数据集 {dataset_dir.name}, 块 {block_dir.name} (有 Cycle 结构)")
+        else:
+            for block_dir in sorted(dataset_dir.iterdir()):
+                if not block_dir.is_dir():
+                    continue
+                if block_dir.name.lower() in skip_names:
+                    continue
+                
+                block_tifs = list(block_dir.glob("*.tif")) + list(block_dir.glob("*.tiff"))
+                if block_tifs:
+                    blocks_to_process.append((dataset_dir.name, block_dir.name, False))
+                    print(f"[发现] 数据集 {dataset_dir.name}, 块 {block_dir.name} (普通结构)")
 
-            # 处理有 Cycle 的 block（TMAd）
-            for base, c1_dir in cycle1_dirs.items():
-                # Cycle1 输出到 cycle1/ 子目录，文件名前缀用 base
-                c1_crop_root = dataset_crop_root / base / "cycle1"
-                window = crop_one_block(c1_dir, crop_root=c1_crop_root, margin=margin, out_name_prefix=base)
+    print(f"[裁剪] 发现 {len(blocks_to_process)} 个数据块")
+    
+    for dataset_name, block_name, has_cycle in blocks_to_process:
+        dataset_dir = stitched_root / dataset_name
+        
+        print(f"\n[处理] {dataset_name}/{block_name}")
+        
+        if has_cycle:
+            cycle1_dir = dataset_dir / "Cycle1" / block_name
+            cycle2_dir = dataset_dir / "Cycle2" / block_name
+            
+            if cycle1_dir.exists():
+                cycle_suffix = f"{dataset_name}_Cycle1"
+                window = crop_one_block(cycle1_dir, crop_root / dataset_name, block_name, cycle_suffix, margin=margin)
+                
+                if cycle2_dir.exists() and window is not None:
+                    cycle_suffix = f"{dataset_name}_Cycle2"
+                    crop_cycle2(cycle2_dir, crop_root / dataset_name, block_name, cycle_suffix, window)
+        else:
+            cycle_suffix = dataset_name
+            crop_one_block(dataset_dir / block_name, crop_root / dataset_name, block_name, cycle_suffix, margin=margin)
 
-                # Cycle2
-                if base in cycle2_dirs and window is not None:
-                    crop_cycle2(cycle2_dirs[base], dataset_crop_root, base, window)
-                elif base not in cycle2_dirs:
-                    print(f"[{base}] 未找到对应 Cycle2 目录，跳过 Cycle2")
-
-            # 处理没有 Cycle 的 block（TMAe）
-            for block_dir in plain_dirs:
-                crop_one_block(block_dir, crop_root=dataset_crop_root, margin=margin)
-
+    print(f"\n✅ 裁剪完成，输出目录: {crop_root}")
