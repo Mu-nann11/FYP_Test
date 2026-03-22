@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # 复制环境文件（变化较少）
-COPY environment.yml /tmp/environment.yml
+COPY Code/Config/environment.yml /tmp/environment.yml
 
 # 使用缓存挂载创建环境（避免重复下载）
 RUN --mount=type=cache,target=/opt/conda/pkgs \
@@ -39,6 +39,6 @@ ENV FIJI_EXE=/opt/Fiji.app/ImageJ-linux64
 ENV PYTHONPATH=/app
 
 # 复制代码（最后，变化最频繁）
-COPY . /app
+COPY Code/ /app/Code/
 
-CMD ["micromamba", "run", "-n", "fiji-stitcher", "python", "main.py", "--batch"]
+CMD ["micromamba", "run", "-n", "fiji-stitcher", "python", "Code/Pipeline/main.py", "--batch"]

@@ -1,7 +1,8 @@
 services:
   fiji-stitcher:
     build:
-      context: .
+      context: ../..
+      dockerfile: Code/Docker/Dockerfile
       args:
         DOWNLOAD_FIJI: "1"
     container_name: fiji-stitcher-cpu
@@ -10,14 +11,15 @@ services:
       FIJI_PATH: /opt/Fiji.app
       FIJI_EXE: /opt/Fiji.app/ImageJ-linux64
     volumes:
-      - .:/app
-      - ./data:/data
-      - ./results:/results
+      - ../..:/app
+      - ../../data:/data
+      - ../../results:/results
       - ../../fiji_config.json:/app/fiji_config.json
       - cellpose_cache:/root/.cellpose
       - torch_cache:/root/.cache/torch
       - keras_cache:/root/.keras
       - cjdk_cache:/root/.cache/cjdk
+    command: ["micromamba", "run", "-n", "fiji-stitcher", "python", "Code/Pipeline/main.py", "--batch"]
 
 volumes:
   cellpose_cache:
