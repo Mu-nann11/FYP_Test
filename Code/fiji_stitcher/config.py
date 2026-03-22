@@ -8,7 +8,8 @@ from typing import Any, Dict, Optional
 
 
 def _project_root():
-    return Path(__file__).resolve().parent.parent
+    # 返回 /app 而不是 /app/Code
+    return Path(__file__).resolve().parent.parent.parent
 
 
 def _load_json(path):
@@ -133,6 +134,15 @@ def load_config(config_path=None):
         "FEATURE_OUTPUT_DIR": "/results/compared_result",
 
         "STITCH_ALLOW_CYCLE2_COMPOSITE": False,
+        "STITCH_SKIP_EXISTING": True,
+        "AUTO_CROP_AFTER_STITCH": False,
+
+        "PREPROCESS": {
+            "AUTO_RUN": True,
+            "DRY_RUN": False,
+            "CYCLE1": True,
+            "CYCLE2": True,
+        },
 
         "SEGMENTATION": {
             "MODEL_TYPE": "nuclei",
@@ -167,6 +177,10 @@ def load_config(config_path=None):
     cfg["BATCH_SAVE_OVERLAY"] = _truthy(cfg.get("BATCH_SAVE_OVERLAY", True))
     cfg["BATCH_DO_ALIGN"] = _truthy(cfg.get("BATCH_DO_ALIGN", True))
     cfg["BATCH_SKIP_DONE"] = _truthy(cfg.get("BATCH_SKIP_DONE", True))
+    cfg["STITCH_SKIP_EXISTING"] = _truthy(cfg.get("STITCH_SKIP_EXISTING", True))
+    raw_crop = cfg.get("AUTO_CROP_AFTER_STITCH", "NOT_FOUND")
+    cfg["AUTO_CROP_AFTER_STITCH"] = _truthy(cfg.get("AUTO_CROP_AFTER_STITCH", False))
+    print(f"[DEBUG] AUTO_CROP raw={raw_crop}, parsed={cfg['AUTO_CROP_AFTER_STITCH']}")
 
     cfg["MAX_OPEN_FILES"] = _as_int(cfg.get("MAX_OPEN_FILES", 30), 30, 1)
     cfg["CROP_MARGIN"] = _as_int(cfg.get("CROP_MARGIN", 20), 20, 0)
@@ -189,6 +203,12 @@ def load_config(config_path=None):
     loader = cfg.setdefault("LOADER", {})
     loader["DO_PREPROCESS"] = _truthy(loader.get("DO_PREPROCESS", False))
     loader["CLAHE_CLIP_LIMIT"] = _as_float(loader.get("CLAHE_CLIP_LIMIT", 2.0), 2.0, 0.0)
+
+    preprocess = cfg.setdefault("PREPROCESS", {})
+    preprocess["AUTO_RUN"] = _truthy(preprocess.get("AUTO_RUN", True))
+    preprocess["DRY_RUN"] = _truthy(preprocess.get("DRY_RUN", False))
+    preprocess["CYCLE1"] = _truthy(preprocess.get("CYCLE1", True))
+    preprocess["CYCLE2"] = _truthy(preprocess.get("CYCLE2", True))
 
     tile = loader.get("CLAHE_TILE_GRID_SIZE", [8, 8])
     if not isinstance(tile, list) or len(tile) != 2:
@@ -273,5 +293,20 @@ def apply_cli_overrides(config):
     ref_channel = _get_value("--ref-channel")
     if ref_channel:
         cfg["STITCH_REFERENCE_CHANNEL"] = str(ref_channel).strip()
+
+    # 预处理相关参数
+    if "--no-preprocess" in args:
+        cfg["PREPROCESS"]["AUTO_RUN"] = False
+    if "--preprocess-only" in args:
+        cfg["PREPROCESS"]["AUTO_RUN"] = True
+        cfg["PREPROCESS"]["ONLY_PREPROCESS"] = True
+    if "--check-data" in args:
+        cfg["PREPROCESS"]["CHECK_ONLY"] = True
+
+    # 跳过已存在文件相关参数
+    if "--no-skip-existing" in args:
+        cfg["STITCH_SKIP_EXISTING"] = False
+    if "--force-stitch" in args:
+        cfg["STITCH_SKIP_EXISTING"] = False
 
     return cfg

@@ -55,6 +55,7 @@ def run_stitch_for_channel(
     ij,
     logger,
     output_dir,
+    fused_prefix=None,
     layout_file=None,
 ):
     ch_dir = level1 / channel
@@ -79,9 +80,25 @@ def run_stitch_for_channel(
 
     logger.info("Channel %s: found %s files (%s)", channel, len(img_files), pattern or "from tile config")
     print("ℹ️ 通道 %s：找到 %s 个匹配文件，开始拼接" % (channel, len(img_files)))
-
-    fused_name = "%s_%s" % (level1.name, channel)
+    
+    # 使用传入的 fused_prefix 或回退到旧的命名规则
+    if fused_prefix is None:
+        fused_prefix = level1.name
+    
+    fused_name = "%s_%s" % (fused_prefix, channel)
     tile_cfg_name = "TileConfiguration_%s.txt" % fused_name
+    
+    # 检查是否启用跳过已存在文件的配置
+    skip_existing = config.get("STITCH_SKIP_EXISTING", True)
+    
+    # 检查输出文件是否已存在，如果存在则跳过拼接
+    expected_output = output_dir / ("%s.tif" % fused_name)
+    if skip_existing and expected_output.exists():
+        logger.info("Output file already exists, skipping stitching: %s", expected_output)
+        print("⏭️  输出文件已存在，跳过拼接: %s" % expected_output.name)
+        # 直接返回已存在的文件路径，不再调用 validate_and_open_result
+        return True, expected_output
+    
     before_candidates = _snapshot_candidates(output_dir)
 
     if layout_file is None:
@@ -132,6 +149,9 @@ def check_channel_sizes(results, logger):
     info = {}
     for ch, p in results.items():
         try:
+            if not p.exists():
+                logger.error("File does not exist for channel size check: %s", p)
+                continue
             arr = tifffile.imread(str(p))
             info[ch] = {"shape": arr.shape, "dtype": str(arr.dtype)}
         except Exception as e:
@@ -177,6 +197,68 @@ def _build_layout_file_from_reference(ref_registered_path, out_path, from_channe
     dst.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _derive_output_structure(raw_level1_path: Path, config: dict) -> Tuple[Path, str]:
+    """
+    根据原始数据路径推断输出目录结构和输出文件名。
+    
+    输入路径示例：
+    - /data/Raw_Data/TMAe/F2         → 输出目录: /results/stitched/TMAe/F2, 文件名前缀: F2_TMAe
+    - /data/Raw_Data/TMAd/Cycle1/A3  → 输出目录: /results/stitched/TMAd/Cycle1/A3, 文件名前缀: A3_TMAd_Cycle1
+    
+    输出目录结构: /results/stitched/{Dataset}/{Sample}/
+    
+    返回: (output_dir, fused_name_prefix)
+    """
+    raw_root = Path(config.get("DEFAULT_ROOT_DIR", "/data"))
+    raw_data_name = config.get("RAW_DATA_DIR_NAME", "Raw_Data")
+    stitched_parent = Path(config["STITCHED_PARENT_DIR"])
+    
+    # 去掉 Raw_Data 前缀，获取相对路径
+    try:
+        relative = raw_level1_path.relative_to(raw_root / raw_data_name)
+    except ValueError:
+        # 如果路径不包含 Raw_Data，使用整个路径的最后一节作为文件名
+        sample_dir = raw_level1_path.name
+        return stitched_parent / sample_dir, raw_level1_path.name
+    
+    parts = relative.parts  # 例如: ('TMAe', 'F2') 或 ('TMAd', 'Cycle1', 'A3')
+    
+    # 构建输出目录 - 直接基于 STITCHED_PARENT_DIR
+    # 结构: /results/stitched/{Dataset}/{Sample}/
+    if len(parts) == 2:
+        # TMAe/F2 格式
+        dataset, sample = parts
+        output_dir = stitched_parent / dataset / sample
+        
+        # 如果第二部分是 Cycle1/Cycle2，需要区分
+        if sample.lower() in ("cycle1", "cycle2"):
+            # 这种情况下 Sample 是块名（通常不应该出现在第二层）
+            fused_prefix = f"{dataset}_{sample}"
+        else:
+            fused_prefix = f"{sample}_{dataset}"
+            
+    elif len(parts) >= 3:
+        # TMAd/Cycle1/A3 格式
+        dataset = parts[0]
+        
+        if len(parts) >= 3 and parts[1].lower().startswith("cycle"):
+            cycle = parts[1]
+            sample = parts[2]  # A3
+            output_dir = stitched_parent / dataset / cycle / sample
+            fused_prefix = f"{sample}_{dataset}_{cycle}"
+        else:
+            # 其他嵌套结构：dataset/level1/level2
+            output_dir = stitched_parent / parts[0] / "_".join(parts[1:])
+            fused_prefix = "_".join(parts[1:]) + "_" + parts[0]
+    else:
+        # 单层
+        dataset = parts[0]
+        output_dir = stitched_parent / dataset
+        fused_prefix = dataset
+    
+    return output_dir, fused_prefix
+
+
 def process_level1_sequential(level1_path, config, ij, logger):
     level1 = Path(level1_path)
     logger.info("Processing level1 (sequential, multi-channel): %s", level1)
@@ -188,13 +270,27 @@ def process_level1_sequential(level1_path, config, ij, logger):
 
     params = configure_stitching_parameters(config, interactive=config["INTERACTIVE"])
 
-    stitched_parent = Path(config["STITCHED_PARENT_DIR"])
-    stitched_parent.mkdir(parents=True, exist_ok=True)
-    output_dir = stitched_parent / level1.name
+    # 根据原始路径推断输出目录和文件名
+    output_dir, fused_prefix = _derive_output_structure(level1, config)
     output_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("Output directory: %s", output_dir)
+    logger.info("Output filename prefix: %s", fused_prefix)
 
     # 判断是否为 Cycle2：只有通道子目录存在时才拼接
-    cycle_name = level1.name
+    # 从路径推断 cycle 名称
+    raw_data_path = Path(config.get("DEFAULT_ROOT_DIR", "/data")) / config.get("RAW_DATA_DIR_NAME", "Raw_Data")
+    try:
+        rel_path = level1.relative_to(raw_data_path)
+        path_parts = rel_path.parts
+    except ValueError:
+        path_parts = [level1.name]
+    
+    # 确定 cycle 名称
+    if len(path_parts) >= 2 and path_parts[1].lower().startswith("cycle"):
+        cycle_name = path_parts[1]
+    else:
+        cycle_name = level1.name
+    
     channels = _channel_order_for_stitch(config, cycle_name)
 
     # Cycle2 + 仅 Composite（根目录多 tif、无通道子目录）→ 跳过
@@ -229,11 +325,12 @@ def process_level1_sequential(level1_path, config, ij, logger):
             ij=ij,
             logger=logger,
             output_dir=output_dir,
+            fused_prefix=fused_prefix,
         )
         if ok and result is not None:
             results[ref_channel] = result
             ref_dir = level1 / ref_channel
-            ref_registered = ref_dir / f"TileConfiguration_{level1.name}_{ref_channel}.registered.txt"
+            ref_registered = ref_dir / f"TileConfiguration_{fused_prefix}_{ref_channel}.registered.txt"
             if not ref_registered.exists():
                 ref_registered = None
 
@@ -245,7 +342,7 @@ def process_level1_sequential(level1_path, config, ij, logger):
         if ref_registered is not None:
             ch_dir = level1 / ch
             if ch_dir.is_dir():
-                layout_path = ch_dir / f"TileConfiguration_{level1.name}_{ch}.from_{ref_channel}.registered.txt"
+                layout_path = ch_dir / f"TileConfiguration_{fused_prefix}_{ch}.from_{ref_channel}.registered.txt"
                 try:
                     _build_layout_file_from_reference(ref_registered, layout_path, ref_channel, ch)
                     layout_file = layout_path.name
@@ -260,6 +357,7 @@ def process_level1_sequential(level1_path, config, ij, logger):
             ij=ij,
             logger=logger,
             output_dir=output_dir,
+            fused_prefix=fused_prefix,
             layout_file=layout_file,
         )
         if ok and result is not None:
