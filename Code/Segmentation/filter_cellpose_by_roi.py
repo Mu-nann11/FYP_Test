@@ -55,8 +55,8 @@ print("全图细胞数:", len(df_cp))
 print("ROI 内细胞数:", len(df_roi))
 
 print("\n=== ROI 内面积统计 ===")
-print("area mean/median:",
-      df_roi["area"].mean(), df_roi["area"].median())
+print("nuc_area mean/median:",
+      df_roi["nuc_area"].mean(), df_roi["nuc_area"].median())
 
 # 5) 保存 ROI 内细胞到新文件
 out_dir.mkdir(parents=True, exist_ok=True)

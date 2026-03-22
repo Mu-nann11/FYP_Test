@@ -168,6 +168,9 @@ def main():
             print(f"✅ 裁剪完成，输出目录: {config['CROP_OUTPUT_DIR']}")
             return
 
+    # --batch 模式：自动执行批量拼接（跳过菜单）
+    is_batch = "--batch" in sys.argv
+
     logger.info("Program started")
     logger.info("Initializing ImageJ...")
 
@@ -179,20 +182,23 @@ def main():
         print(f"❌ ImageJ 初始化失败: {e}")
         return
 
-    print("\n" + "=" * 50)
-    print("请选择功能:")
-    print("1. 处理所有一级目录（批量拼接）")
-    print("2. 打开单个拼接结果")
-    print("3. 批量打开所有拼接结果")
-    print("4. 批量裁剪拼接结果（保持原始位深）")
-    print("=" * 50)
+    if is_batch:
+        choice = "1"
+    else:
+        print("\n" + "=" * 50)
+        print("请选择功能:")
+        print("1. 处理所有一级目录（批量拼接）")
+        print("2. 打开单个拼接结果")
+        print("3. 批量打开所有拼接结果")
+        print("4. 批量裁剪拼接结果（保持原始位深）")
+        print("=" * 50)
 
-    choice = timeout_input(
-        "请输入功能编号 (1-4，默认1)",
-        default="1",
-        timeout=10,
-        interactive=config["INTERACTIVE"],
-    ).strip() or "1"
+        choice = timeout_input(
+            "请输入功能编号 (1-4，默认1)",
+            default="1",
+            timeout=10,
+            interactive=config["INTERACTIVE"],
+        ).strip() or "1"
 
     if choice == "1":
         if config.get("ONLY_LEVEL1"):

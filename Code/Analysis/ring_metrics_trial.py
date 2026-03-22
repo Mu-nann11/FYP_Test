@@ -24,12 +24,13 @@ def _progress_done():
     sys.stdout.flush()
 
 
-def compute_block(block: str, expansion_px: int) -> pd.DataFrame:
+def compute_block(block: str, expansion_px: int, dataset: str = "TMAe") -> pd.DataFrame:
     t0 = time.time()
     print(f"[{block} | {expansion_px}px] loading images...")
-    imgs = load_block(block, do_preprocess=True)
-    dapi = imgs["DAPI"]
-    her2 = imgs["HER2"]
+    data = load_block(dataset, block, do_preprocess=True)
+    cycle1 = data["cycle1"]
+    dapi = cycle1["DAPI"]
+    her2 = cycle1["HER2"]
 
     print(f"[{block} | {expansion_px}px] segmenting nuclei...")
     nuclei = segment_nuclei(dapi)
@@ -95,8 +96,9 @@ def summarize_cells(df_cells: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def load_excel_labels(blocks: list[str]) -> pd.DataFrame:
-    excel_path = Path("1_BC081120e specs.xlsx")
+def load_excel_labels(blocks: list[str], excel_path: str = None) -> pd.DataFrame:
+    if excel_path is None:
+        excel_path = str(Path(__file__).resolve().parent.parent.parent / "1_BC081120e specs.xlsx")
     df_excel = pd.read_excel(excel_path, skiprows=10)
     df_excel.columns = [str(c).strip() for c in df_excel.columns]
     labels = df_excel[df_excel["Position"].astype(str).isin(blocks)][["Position", "HER2"]].copy()
@@ -108,20 +110,23 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--blocks", nargs="+", default=["F10", "E5"])
     parser.add_argument("--expansion", nargs="+", type=int, default=[10, 15, 20])
+    parser.add_argument("--dataset", default="TMAe", help="数据集名称 (TMAe/TMAd)")
+    parser.add_argument("--excel", default=None, help="Excel 标签文件路径")
     args = parser.parse_args()
 
     blocks = [str(b).strip() for b in args.blocks if str(b).strip()]
     expansions = [int(x) for x in args.expansion]
+    dataset = args.dataset
 
     out_dir = Path("/results/compared_result")
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    labels = load_excel_labels(blocks)
+    labels = load_excel_labels(blocks, excel_path=args.excel)
     labels.to_csv(out_dir / "ring_metrics_excel_labels.csv", index=False, encoding="utf-8-sig")
 
     all_reports = []
     for expansion_px in expansions:
-        dfs = [compute_block(b, expansion_px=expansion_px) for b in blocks]
+        dfs = [compute_block(b, expansion_px=expansion_px, dataset=dataset) for b in blocks]
         df_cells = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
 
         cells_name = "ring_metrics_cells_%s_px.csv" % expansion_px

@@ -40,7 +40,7 @@ def compare_qupath(
         "cp_cell_id": matched_cp["cell_id"],
         "cp_centroid_x": matched_cp[cx_cp],
         "cp_centroid_y": matched_cp[cy_cp],
-        "cp_area": matched_cp["area"].astype(float),
+        "cp_area": matched_cp["nuc_area"].astype(float),
         "distance": distances,
         "matched_within_max_dist": valid,
     })

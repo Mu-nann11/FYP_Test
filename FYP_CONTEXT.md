@@ -113,4 +113,10 @@ docker-compose -f Code/Docker/docker-compose.gpu.yml run --rm fiji-stitcher micr
 
 - [x] Docker 路径修复完成
 - [x] PYTHONPATH 修复完成
-- [ ] **下一步**: 问题 4 修复后尚未验证是否跑通，需要 `git pull` + `build --no-cache` + 运行测试
+- [x] **Bug 修复** (2026-03-22):
+  - [x] `main.py` --batch 参数无效：Docker CMD 传 --batch 后仍弹菜单 → 已修复，--batch 自动选批量拼接
+  - [x] `compare_qupath.py` 列名 `area` → `nuc_area`（与 features.py 输出一致）
+  - [x] `filter_cellpose_by_roi.py` 列名 `area` → `nuc_area`
+  - [x] `label_biomarkers.py` 旧列名 `ER_mean` → `ER_nuc_mean` 等（全列名更新）
+  - [x] `ring_metrics_trial.py` `load_block(block)` → `load_block(dataset, block)`（补缺 dataset_name 参数）；通道访问 `imgs["HER2"]` → `data["cycle1"]["HER2"]`；Excel 路径改为相对项目根；新增 `--dataset`/`--excel` CLI 参数
+- [ ] **下一步**: git pull + build --no-cache + 运行测试验证
