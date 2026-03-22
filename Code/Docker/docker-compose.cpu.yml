@@ -13,7 +13,7 @@ services:
       - .:/app
       - ./data:/data
       - ./results:/results
-      - ./fiji_config.json:/app/fiji_config.json
+      - ../../fiji_config.json:/app/fiji_config.json
       - cellpose_cache:/root/.cellpose
       - torch_cache:/root/.cache/torch
       - keras_cache:/root/.keras

@@ -5,7 +5,7 @@ class Config:
     def __init__(self, config_path: Path = None):
         if config_path is None:
             # 默认指向当前目录下的 fiji_config.json
-            config_path = Path(__file__).parent / "fiji_config.json"
+            config_path = Path(__file__).resolve().parent.parent.parent / "fiji_config.json"
         
         self.config_path = config_path
         self.data = {}
